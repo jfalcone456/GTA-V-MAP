@@ -562,6 +562,15 @@ const geolocate = new maplibregl.GeolocateControl({
 map.addControl(geolocate, "top-right");
 map.addControl(new maplibregl.ScaleControl({ maxWidth: 120, unit: "imperial" }), "bottom-left");
 
+/* style watchdog: tile-server hiccups can strand the map unstyled — keep retrying until it loads */
+let styleRetries = 0;
+const styleWatchdog = setInterval(() => {
+  if (map.isStyleLoaded()) { clearInterval(styleWatchdog); return; }
+  if (++styleRetries > 6) { clearInterval(styleWatchdog); return; }
+  showToast("Reconnecting to map servers…");
+  try { map.setStyle(style, { diff: false }); } catch (e) {}
+}, 12000);
+
 /* ---- GTA-style location blips ----
    POI positions come from the OSM data already inside the free map tiles —
    no live service or API needed. Add your own spots to CUSTOM_LOCATIONS below. */
@@ -700,27 +709,20 @@ async function runSearch() {
     } else {
       url += "&bounded=1&viewbox=-74.4,47.8,-66.3,40.6";
     }
-    /* run two searches in parallel: Nominatim (addresses, landmarks) + Overpass name-match
-       around the start (catches nearby chain stores like "dunkin" that Nominatim misses) */
+    /* run two searches in parallel: a broad one plus a strictly-bounded one around the start —
+       the bounded pass catches nearby chain stores ("dunkin") that broad ranking buries */
     const jobs = [fetch(url, { signal: AbortSignal.timeout(9000) }).then(r => r.json()).catch(() => [])];
     if (org) {
-      const rx = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const oq = '[out:json][timeout:8];(nwr[name~"' + rx + '",i](around:16000,' + org.pt[1] + "," + org.pt[0] + "););out tags center 25;";
-      jobs.push(fetch("https://overpass-api.de/api/interpreter", {
-        method: "POST", body: "data=" + encodeURIComponent(oq),
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        signal: AbortSignal.timeout(9000)
-      }).then(r => r.json()).then(j => (j.elements || [])
-        .map(el => ({ lon: el.lon || (el.center && el.center.lon), lat: el.lat || (el.center && el.center.lat),
-          display_name: (el.tags.name || "") + ", " + (el.tags["addr:street"] || el.tags["addr:city"] || "nearby"),
-          type: "nearby" }))
-        .filter(it => it.display_name.length > 3 && it.lon != null)
-      ).catch(() => []));
+      const d = 0.25;
+      const nearUrl = "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=8&bounded=1" +
+        "&viewbox=" + (org.pt[0] - d) + "," + (org.pt[1] + d) + "," + (org.pt[0] + d) + "," + (org.pt[1] - d) +
+        "&q=" + encodeURIComponent(q);
+      jobs.push(fetch(nearUrl, { signal: AbortSignal.timeout(9000) }).then(r => r.json()).catch(() => []));
     }
-    const [nomList, ovList] = await Promise.all([jobs[0], jobs[1] || []]);
-    // merge, dedup by name + rough location
+    const [nomList, nearList] = await Promise.all([jobs[0], jobs[1] || []]);
+    // merge nearby-first, dedup by name + rough location
     const seen = new Set();
-    const list = [...(ovList || []), ...(Array.isArray(nomList) ? nomList : [])].filter(r => {
+    const list = [...(Array.isArray(nearList) ? nearList : []), ...(Array.isArray(nomList) ? nomList : [])].filter(r => {
       const k = r.display_name.split(",")[0].toLowerCase() + "|" + (+r.lon).toFixed(3) + "," + (+r.lat).toFixed(3);
       if (seen.has(k)) return false;
       seen.add(k); return true;
