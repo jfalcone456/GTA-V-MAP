@@ -700,9 +700,33 @@ async function runSearch() {
     } else {
       url += "&bounded=1&viewbox=-74.4,47.8,-66.3,40.6";
     }
-    const res = await fetch(url, { signal: AbortSignal.timeout(9000) });
-    const list = await res.json();
+    /* run two searches in parallel: Nominatim (addresses, landmarks) + Overpass name-match
+       around the start (catches nearby chain stores like "dunkin" that Nominatim misses) */
+    const jobs = [fetch(url, { signal: AbortSignal.timeout(9000) }).then(r => r.json()).catch(() => [])];
+    if (org) {
+      const rx = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const oq = '[out:json][timeout:8];(nwr[name~"' + rx + '",i](around:16000,' + org.pt[1] + "," + org.pt[0] + "););out tags center 25;";
+      jobs.push(fetch("https://overpass-api.de/api/interpreter", {
+        method: "POST", body: "data=" + encodeURIComponent(oq),
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        signal: AbortSignal.timeout(9000)
+      }).then(r => r.json()).then(j => (j.elements || [])
+        .map(el => ({ lon: el.lon || (el.center && el.center.lon), lat: el.lat || (el.center && el.center.lat),
+          display_name: (el.tags.name || "") + ", " + (el.tags["addr:street"] || el.tags["addr:city"] || "nearby"),
+          type: "nearby" }))
+        .filter(it => it.display_name.length > 3 && it.lon != null)
+      ).catch(() => []));
+    }
+    const [nomList, ovList] = await Promise.all([jobs[0], jobs[1] || []]);
+    // merge, dedup by name + rough location
+    const seen = new Set();
+    const list = [...(ovList || []), ...(Array.isArray(nomList) ? nomList : [])].filter(r => {
+      const k = r.display_name.split(",")[0].toLowerCase() + "|" + (+r.lon).toFixed(3) + "," + (+r.lat).toFixed(3);
+      if (seen.has(k)) return false;
+      seen.add(k); return true;
+    });
     if (org) list.sort((a, b) => milesBetween(org.pt, [+a.lon, +a.lat]) - milesBetween(org.pt, [+b.lon, +b.lat]));
+    list.length = Math.min(list.length, 8);
     searchResults.innerHTML = "";
     if (!list.length) {
       searchResults.innerHTML = '<div class="sr"><div class="sr-d">No results in New England</div></div>';
@@ -1199,6 +1223,23 @@ const STATE_ABBR = { "Rhode Island": "RI", "Massachusetts": "MA", "Connecticut":
   "New Hampshire": "NH", "Vermont": "VT", "Maine": "ME", "New York": "NY",
   "New Jersey": "NJ", "Pennsylvania": "PA", "Quebec": "QC", "New Brunswick": "NB" };
 const stateCache = new Map();
+const localityCache = new Map();
+/* reverse-geocode the locality when no place label is rendered in view (cached per ~3.5mi cell) */
+async function localityFor(lng, lat) {
+  const key = Math.round(lng * 20) + "," + Math.round(lat * 20);
+  if (localityCache.has(key)) return localityCache.get(key);
+  try {
+    const res = await fetch("https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=14&lat=" + lat + "&lon=" + lng,
+      { signal: AbortSignal.timeout(7000) });
+    const a = (await res.json()).address || {};
+    const out = {
+      name: a.neighbourhood || a.suburb || a.quarter || a.village || a.town || a.city || a.hamlet || "",
+      st: STATE_ABBR[a.state] || ""
+    };
+    localityCache.set(key, out);
+    return out;
+  } catch (e) { return { name: "", st: "" }; }
+}
 async function stateAbbrFor(lng, lat) {
   const key = Math.round(lng * 5) + "," + Math.round(lat * 5);
   if (stateCache.has(key)) return stateCache.get(key);
@@ -1244,7 +1285,17 @@ function updateArea() {
     if (d < bestD) { bestD = d; best = f; }
   }
   if (!best) {
-    if (z < 8 && lastArea !== "New England") { lastArea = "New England"; setAreaText("New England"); }
+    if (z < 8) {
+      if (lastArea !== "New England") { lastArea = "New England"; setAreaText("New England"); }
+    } else {
+      // street level with no place label rendered in view: resolve the neighborhood by reverse lookup
+      const ctr = map.getCenter();
+      localityFor(ctr.lng, ctr.lat).then(loc => {
+        if (!loc.name) return;
+        const txt = loc.name + (loc.st ? ", " + loc.st : "");
+        if (txt !== lastArea) { lastArea = txt; setAreaText(txt); }
+      });
+    }
     return;
   }
   const name = best.properties.name;
