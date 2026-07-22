@@ -1,0 +1,1370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#101314">
+<title>New England — GTA V Style Map</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.min.css">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Kaushan+Script&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.min.js"></script>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #101314; }
+  #map { position: absolute; inset: 0; }
+
+  /* pause-menu vignette + film grain in ONE composited overlay (halves full-screen layer cost) */
+  #vignette {
+    position: absolute; inset: 0; pointer-events: none; z-index: 5;
+    background:
+      radial-gradient(ellipse at center, rgba(0,0,0,0) 55%, rgba(0,0,0,0.4) 100%),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
+  }
+
+  /* GTA pause-map style HUD: black chips, white uppercase text */
+  #hud {
+    position: absolute; top: max(10px, env(safe-area-inset-top)); left: 12px; z-index: 10;
+    user-select: none; pointer-events: none;
+    font-family: "Arial Narrow", "Helvetica Neue Condensed", Arial, sans-serif;
+  }
+  #hud .chip {
+    display: table; margin-bottom: 5px;
+    background: rgba(8,8,8,0.88); color: #ffffff;
+    text-transform: uppercase; font-weight: 700;
+    padding: 5px 12px; letter-spacing: 1.5px;
+  }
+  #hud .chip.title { font-size: 21px; letter-spacing: 2px; }
+  #hud .chip.sub   { font-size: 10.5px; color: #d0d0d0; }
+  #hud .chip.hint  { font-size: 10.5px; color: #d0d0d0; }
+  #hud .blip {
+    display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+    background: #b14fc9; border: 2px solid #fff; vertical-align: -1px; margin-right: 5px;
+  }
+  #hud .chip.colors { pointer-events: auto; padding: 5px 8px; }
+  .route-swatch {
+    display: inline-block; width: 16px; height: 16px; margin: 0 3px;
+    border: 2px solid rgba(255,255,255,0.35); cursor: pointer; vertical-align: middle;
+  }
+  .route-swatch.active { border-color: #ffffff; }
+
+  /* GTA-style search bar */
+  #searchwrap {
+    position: absolute; top: max(10px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%);
+    z-index: 12; width: min(400px, calc(100vw - 190px));
+    font-family: "Oswald", "Arial Narrow", Arial, sans-serif;
+  }
+  #searchbox {
+    display: flex; background: rgba(8,8,8,0.9); box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+  }
+  #searchinput {
+    flex: 1; min-width: 0; background: transparent; border: none; outline: none;
+    color: #fff; font-family: inherit; font-size: 16px; font-weight: 600;  /* 16px stops iOS focus auto-zoom */
+    letter-spacing: 1px; padding: 8px 12px; text-transform: uppercase;
+  }
+  #searchinput::placeholder { color: #8a8a8a; }
+  #searchgo {
+    background: #b14fc9; color: #fff; border: none; cursor: pointer;
+    font-family: inherit; font-size: 12px; font-weight: 700; letter-spacing: 1.5px;
+    text-transform: uppercase; padding: 0 14px;
+  }
+  #searchresults { margin-top: 4px; display: none; }
+  #searchresults.show { display: block; }
+  #searchresults .sr {
+    background: rgba(8,8,8,0.92); color: #fff; cursor: pointer; padding: 8px 12px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+  }
+  #searchresults .sr:hover { background: rgba(30,30,30,0.95); }
+  #searchresults .sr .sr-n { font-size: 12.5px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
+  #searchresults .sr .sr-d { font-size: 10.5px; color: #9a9a9a; letter-spacing: 0.5px; }
+
+  @media (max-width: 560px) {
+    #searchwrap { width: calc(100vw - 120px); left: 10px; transform: none; }
+    #hud { top: calc(max(10px, env(safe-area-inset-top)) + 46px); }
+  }
+
+  /* GTA-style blip legend (right side) */
+  #blips {
+    position: absolute; top: 200px; right: 10px; z-index: 10;
+    display: flex; flex-direction: column; align-items: flex-end; gap: 4px;
+    font-family: "Arial Narrow", "Helvetica Neue Condensed", Arial, sans-serif;
+  }
+  #blips .legend-toggle {
+    background: rgba(8,8,8,0.88); color: #fff; cursor: pointer;
+    font-size: 11px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase;
+    padding: 6px 12px; user-select: none;
+  }
+  #blips .items { display: none; flex-direction: column; align-items: flex-end; gap: 3px; max-height: 55vh; overflow-y: auto; }
+  #blips.open .items { display: flex; }
+  #blips .blip-item {
+    display: flex; align-items: center; gap: 7px; cursor: pointer; user-select: none;
+    background: rgba(8,8,8,0.88); color: #fff;
+    font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
+    padding: 4px 8px 4px 10px;
+  }
+  #blips .blip-item img { width: 19px; height: 19px; }
+  #blips .blip-item.off { opacity: 0.35; }
+  #blips .blip-item { touch-action: manipulation; -webkit-user-select: none; }
+  #blips .legend-hint {
+    background: rgba(8,8,8,0.7); color: #8a8a8a; font-size: 9.5px; font-weight: 600;
+    letter-spacing: 1px; text-transform: uppercase; padding: 3px 8px;
+  }
+
+  /* GTA-style place info card */
+  #placecard {
+    position: absolute; left: 10px; bottom: max(44px, env(safe-area-inset-bottom)); z-index: 11;
+    display: none; max-width: min(400px, calc(100vw - 20px)); min-width: 290px;
+    background: rgba(8,8,8,0.93); border-left: 5px solid #b14fc9;
+    padding: 17px 20px 16px; color: #fff;
+    font-family: "Arial Narrow", "Helvetica Neue Condensed", Arial, sans-serif;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.6);
+  }
+  #placecard.show { display: block; }
+  #placecard .pc-name { font-size: 23px; font-weight: 900; letter-spacing: 1.5px; text-transform: uppercase; line-height: 1.15; }
+  #placecard .pc-cat  { font-size: 12.5px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: #b14fc9; margin-top: 4px; }
+  #placecard .pc-rows { margin-top: 10px; font-size: 14.5px; color: #d0d0d0; line-height: 1.6; }
+  #placecard .pc-rows .lbl { color: #8a8a8a; font-weight: 700; letter-spacing: 1px; font-size: 11.5px; margin-right: 6px; text-transform: uppercase; }
+  #placecard .pc-rows a { color: #7fc4e8; text-decoration: none; }
+  #placecard .pc-loading { color: #8a8a8a; font-size: 12px; letter-spacing: 1px; text-transform: uppercase; margin-top: 8px; }
+  #placecard .pc-actions { margin-top: 14px; }
+  #placecard button {
+    font-family: inherit; font-size: 12.5px; font-weight: 700; letter-spacing: 1.5px;
+    text-transform: uppercase; border: none; cursor: pointer; padding: 9px 16px; margin-right: 7px; margin-top: 4px;
+  }
+  #placecard #pc-route { background: #ffffff; color: #000; }
+  #placecard #pc-start { background: #b14fc9; color: #fff; }
+  #placecard #pc-safehouse { background: #2e5c3f; color: #fff; }
+  #placecard #pc-close { background: #2a2a2a; color: #fff; }
+  #placecard #pc-remove { background: #5c1f1f; color: #fff; display: none; }
+  .pc-open { margin-left: 9px; padding: 2px 8px; font-size: 11px; }
+  .pc-open.yes { background: #1f4632; color: #2ce68c; }
+  .pc-open.no  { background: #46201f; color: #ff6c5c; }
+
+  /* markers scale with zoom (inner element; MapLibre owns the outer transform) */
+  .waypoint, .player { transform: scale(var(--blip-scale, 1)); transform-origin: center center; }
+  #resetstart { pointer-events: auto; cursor: pointer; }
+
+  /* GTA font (Chalet lookalike) across the UI */
+  #hud, #toast, #blips, #placecard, #bottombar, .maplibregl-ctrl-scale {
+    font-family: "Oswald", "Arial Narrow", Arial, sans-serif;
+  }
+
+
+  /* pause-menu bottom bar */
+  #bottombar {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 9;
+    display: flex; justify-content: space-between; align-items: center; gap: 10px;
+    height: 32px; padding: 0 12px env(safe-area-inset-bottom);
+    background: rgba(5,5,5,0.85); color: #e0e0e0;
+    font-size: 11px; font-weight: 600; letter-spacing: 1.5px; text-transform: uppercase;
+    user-select: none; white-space: nowrap; overflow: hidden;
+  }
+  #bottombar .bb-right { display: flex; gap: 14px; align-items: center; }
+  #bottombar .bb-hint { opacity: 0.6; }
+  #locname { font-weight: 700; letter-spacing: 2px; overflow: hidden; text-overflow: ellipsis; }
+  #lowdetail { cursor: pointer; padding: 3px 9px; background: #222; }
+  #lowdetail.on { background: #fff; color: #000; }
+
+  /* handwritten area name, gameplay-style */
+  #locscript {
+    position: absolute; right: 16px; bottom: 46px; z-index: 9; pointer-events: none;
+    font-family: "Kaushan Script", cursive; font-size: 52px; color: #fff;
+    text-shadow: 3px 4px 6px rgba(0,0,0,0.9); opacity: 0; transition: opacity 0.6s;
+    white-space: nowrap; padding: 0 4px 10px;  /* room for script swashes & descenders — no clipping */
+  }
+  #locscript.show { opacity: 1; }
+
+  /* keep controls clear of the bottom bar */
+  .maplibregl-ctrl-bottom-left { bottom: 34px; }
+  .maplibregl-ctrl-bottom-right { bottom: 34px; }
+  .zoom-btn { color: #fff !important; font-size: 19px; font-weight: 700; font-family: Arial, sans-serif; }
+
+  /* route info bar + turn-by-turn panel */
+  #routebar {
+    position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%); z-index: 10;
+    display: none; align-items: center; gap: 10px;
+    background: rgba(8,8,8,0.92); color: #fff; padding: 7px 8px 7px 14px;
+    font-weight: 700; font-size: 13px; letter-spacing: 1.2px; text-transform: uppercase;
+    border-left: 4px solid #b14fc9; box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+    white-space: nowrap; font-family: "Oswald", "Arial Narrow", Arial, sans-serif;
+  }
+  #routebar.show { display: flex; }
+  #rb-speed { color: #2ce68c; }
+  #rb-speed:empty { display: none; }
+  #routebar button {
+    font-family: inherit; font-size: 11px; font-weight: 700; letter-spacing: 1.2px;
+    text-transform: uppercase; border: none; cursor: pointer; padding: 5px 10px;
+  }
+  #rb-steps { background: #fff; color: #000; }
+  #rb-clear { background: #2a2a2a; color: #fff; }
+  #dirpanel {
+    position: absolute; bottom: 84px; left: 50%; transform: translateX(-50%); z-index: 10;
+    display: none; width: min(380px, calc(100vw - 20px)); max-height: 42vh; overflow-y: auto;
+    background: rgba(8,8,8,0.94); box-shadow: 0 4px 14px rgba(0,0,0,0.6);
+    font-family: "Oswald", "Arial Narrow", Arial, sans-serif;
+  }
+  #dirpanel.show { display: block; }
+  #dirpanel .step {
+    display: flex; align-items: center; gap: 12px; padding: 8px 14px;
+    border-bottom: 1px solid rgba(255,255,255,0.07); color: #e0e0e0; font-size: 13px;
+  }
+  #dirpanel .step .arw { font-size: 17px; color: #b14fc9; width: 22px; text-align: center; flex: none; }
+  #dirpanel .step .sd { color: #8a8a8a; font-size: 11px; letter-spacing: 1px; margin-left: auto; flex: none; }
+
+  /* waypoint toast */
+  #toast {
+    position: absolute; bottom: max(92px, env(safe-area-inset-bottom)); left: 50%;
+    transform: translateX(-50%); z-index: 10;
+    background: rgba(8,8,8,0.9); color: #ffffff;
+    font-family: "Arial Narrow", Arial, sans-serif; font-weight: 700;
+    font-size: 13px; letter-spacing: 1.5px; text-transform: uppercase;
+    padding: 8px 16px; border-left: 4px solid #b14fc9;
+    opacity: 0; transition: opacity 0.35s; pointer-events: none; white-space: nowrap;
+  }
+  #toast.show { opacity: 1; }
+
+  /* live GPS player marker: GTA radar arrow, HD re-creation */
+  .player-live-wrap { transform: scale(var(--blip-scale, 1)); transform-origin: center center; }
+  .player-live {
+    width: 52px; height: 52px;
+    background: center / contain no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='128' viewBox='0 0 128 128'%3E%3Cg stroke='%234a1a08' stroke-width='7' stroke-linejoin='round'%3E%3Cpath d='M64 10 L64 88 L16 114 Z' fill='%23f07a30'/%3E%3Cpath d='M64 10 L112 114 L64 88 Z' fill='%23c2511e'/%3E%3C/g%3E%3C/svg%3E");
+    filter: drop-shadow(0 2px 4px rgba(0,0,0,0.75));
+    transition: transform 0.3s linear;
+  }
+  /* hide MapLibre's default blue dot — the arrow replaces it */
+  .maplibregl-user-location-dot, .maplibregl-user-location-accuracy-circle { display: none !important; }
+
+  /* player origin blip */
+  .player {
+    width: 17px; height: 17px; border-radius: 50%;
+    background: #ffffff; border: 3px solid #1a1a1a;
+    box-shadow: 0 0 0 2px rgba(255,255,255,0.5), 0 2px 6px rgba(0,0,0,0.6);
+  }
+
+  /* GTA waypoint marker: compass arrows + ring, tinted to match the route color (set from JS) */
+  .waypoint {
+    width: 40px; height: 40px; cursor: pointer;
+    background-position: center; background-size: contain; background-repeat: no-repeat;
+    filter: drop-shadow(0 1px 3px rgba(0,0,0,0.75));
+  }
+
+  /* dark controls */
+  .maplibregl-ctrl-group {
+    background: rgba(8,8,8,0.9) !important; border-radius: 3px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.6) !important;
+  }
+  .maplibregl-ctrl-group button { width: 34px !important; height: 34px !important; }
+  .maplibregl-ctrl-group button + button { border-top: 1px solid rgba(255,255,255,0.12) !important; }
+  .maplibregl-ctrl button .maplibregl-ctrl-icon { filter: invert(0.9); }
+  .maplibregl-ctrl-attrib { background: rgba(8,8,8,0.75) !important; }
+  .maplibregl-ctrl-attrib, .maplibregl-ctrl-attrib a { color: #9a9a9a !important; font-size: 10px; }
+  .maplibregl-ctrl-scale {
+    background: rgba(8,8,8,0.7) !important; color: #e0e0e0 !important;
+    border-color: #e0e0e0 !important; font-family: "Arial Narrow", Arial, sans-serif;
+    font-weight: 700; letter-spacing: 1px;
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="vignette"></div>
+<div id="hud">
+  <div class="chip hint"><span class="blip"></span>Tap map to set waypoint</div>
+  <div class="chip hint" id="resetstart">⟲ Reset start</div>
+  <div class="chip colors" id="swatches">
+    <span class="route-swatch active" data-color="#ffe14d" style="background:#ffe14d"></span>
+    <span class="route-swatch" data-color="#4db8ff" style="background:#4db8ff"></span>
+    <span class="route-swatch" data-color="#2ce68c" style="background:#2ce68c"></span>
+    <span class="route-swatch" data-color="#ffffff" style="background:#ffffff"></span>
+    <span class="route-swatch" data-color="#b14fc9" style="background:#b14fc9"></span>
+  </div>
+</div>
+<div id="searchwrap">
+  <div id="searchbox">
+    <input id="searchinput" type="text" placeholder="Search address or place" autocomplete="off" enterkeyhint="search">
+    <button id="searchgo">Go</button>
+  </div>
+  <div id="searchresults"></div>
+</div>
+<div id="blips"><div class="legend-toggle">Blips ▾</div><div class="items"></div></div>
+<div id="placecard">
+  <div class="pc-name"></div>
+  <div class="pc-cat"></div>
+  <div class="pc-rows"></div>
+  <div class="pc-loading"></div>
+  <div class="pc-actions"><button id="pc-route">Set Waypoint</button><button id="pc-start">Set Start</button><button id="pc-safehouse">Set Safehouse</button><button id="pc-remove">Remove</button><button id="pc-close">Close</button></div>
+</div>
+<div id="routebar">
+  <span id="rb-main"></span><span id="rb-speed"></span>
+  <button id="rb-steps">Steps</button><button id="rb-clear">✕</button>
+</div>
+<div id="dirpanel"></div>
+<div id="locscript"></div>
+<div id="bottombar">
+  <span id="locname">New England</span>
+  <span class="bb-right">
+    <span id="lowdetail">Low Detail</span>
+    <span class="bb-hint">Hold — Point of Interest</span>
+    <span class="bb-hint">Tap — Waypoint</span>
+  </span>
+</div>
+<div id="toast"></div>
+
+<script>
+/* GTA V pause-menu palette */
+const LAND      = "#181818";  // charcoal land
+const URBAN     = "#212120";  // city blocks, slightly lighter
+const WOOD      = "#1c211a";  // faint green-gray
+const GRASS     = "#20251d";
+const SAND      = "#35342c";
+const WATER     = "#101314";  // near-black water
+const SHELF     = "#6f7d80";  // light-gray coastal shelf
+const MINOR     = "#8f8f8f";
+const SECOND    = "#b5b5b5";
+const PRIMARY   = "#d6d6d6";
+const MWY       = "#efefef";
+const CASE_DK   = "#0b0b0b";
+const BUILDING  = "#2f2f2d";
+const HALO      = "#0b0b0b";
+
+const style = {
+  version: 8,
+  glyphs: "https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf",
+  sources: {
+    omt: { type: "vector", url: "https://tiles.openfreemap.org/planet" }
+  },
+  layers: [
+    { id: "background", type: "background", paint: { "background-color": LAND } },
+
+    { id: "landuse-urban", type: "fill", source: "omt", "source-layer": "landuse",
+      filter: ["in", "class", "residential", "suburb", "neighbourhood", "commercial", "industrial", "retail"],
+      paint: { "fill-color": URBAN, "fill-opacity": 0.9 } },
+
+    { id: "landcover-wood", type: "fill", source: "omt", "source-layer": "landcover",
+      filter: ["==", "class", "wood"],
+      paint: { "fill-color": WOOD, "fill-opacity": 0.8 } },
+
+    { id: "landcover-grass", type: "fill", source: "omt", "source-layer": "landcover",
+      filter: ["in", "class", "grass", "farmland", "meadow"],
+      paint: { "fill-color": GRASS, "fill-opacity": 0.6 } },
+
+    { id: "landcover-sand", type: "fill", source: "omt", "source-layer": "landcover",
+      filter: ["==", "class", "sand"],
+      paint: { "fill-color": SAND, "fill-opacity": 0.9 } },
+
+    { id: "park", type: "fill", source: "omt", "source-layer": "park",
+      paint: { "fill-color": GRASS, "fill-opacity": 0.5 } },
+
+    { id: "water", type: "fill", source: "omt", "source-layer": "water",
+      paint: { "fill-color": WATER } },
+
+    /* faint shelf hugging the shoreline, offset into the water */
+    { id: "coast-shelf", type: "line", source: "omt", "source-layer": "water",
+      paint: {
+        "line-color": SHELF, "line-opacity": 0.18,
+        "line-width": ["interpolate", ["exponential", 1.4], ["zoom"], 6, 2.5, 10, 6, 14, 14, 17, 24],
+        "line-offset": ["interpolate", ["exponential", 1.4], ["zoom"], 6, 1.25, 10, 3, 14, 7, 17, 12],
+        "line-blur": 4
+      } },
+
+    /* subtle shoreline edge */
+    { id: "coastline", type: "line", source: "omt", "source-layer": "water",
+      paint: { "line-color": "#5f6a6c", "line-width": ["interpolate", ["linear"], ["zoom"], 6, 0.6, 12, 1, 17, 1.6], "line-opacity": 0.4 } },
+
+    { id: "waterway", type: "line", source: "omt", "source-layer": "waterway",
+      paint: { "line-color": "#2c3538",
+        "line-width": ["interpolate", ["exponential", 1.4], ["zoom"], 8, 0.6, 14, 2.5, 18, 8] } },
+
+    { id: "aeroway", type: "line", source: "omt", "source-layer": "aeroway",
+      minzoom: 10, filter: ["in", "class", "runway", "taxiway"],
+      paint: { "line-color": "#6f6f6f",
+        "line-width": ["interpolate", ["exponential", 1.5], ["zoom"], 10, 1, 14, 8, 18, 40] } },
+
+    { id: "rail", type: "line", source: "omt", "source-layer": "transportation",
+      minzoom: 11, filter: ["==", "class", "rail"],
+      paint: { "line-color": "#3d3f3e", "line-width": 1.3, "line-dasharray": [3, 3] } },
+
+    { id: "ferry", type: "line", source: "omt", "source-layer": "transportation",
+      filter: ["==", "class", "ferry"],
+      paint: { "line-color": "#4a5c60", "line-width": 1.3, "line-dasharray": [2, 3] } },
+
+    /* ---- minor roads: medium gray ---- */
+    { id: "road-minor-case", type: "line", source: "omt", "source-layer": "transportation",
+      minzoom: 11, filter: ["in", "class", "minor", "service"],
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": CASE_DK,
+        "line-width": ["interpolate", ["exponential", 1.6], ["zoom"], 11, 1, 14, 4, 18, 15] } },
+    { id: "road-minor", type: "line", source: "omt", "source-layer": "transportation",
+      minzoom: 11, filter: ["in", "class", "minor", "service"],
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": MINOR,
+        "line-width": ["interpolate", ["exponential", 1.6], ["zoom"], 11, 0.6, 14, 2.8, 18, 12] } },
+
+    /* ---- secondary / tertiary: lighter gray ---- */
+    { id: "road-sec-case", type: "line", source: "omt", "source-layer": "transportation",
+      minzoom: 8, filter: ["in", "class", "secondary", "tertiary"],
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": CASE_DK,
+        "line-width": ["interpolate", ["exponential", 1.6], ["zoom"], 8, 1.2, 12, 3.2, 14, 6, 18, 21] } },
+    { id: "road-sec", type: "line", source: "omt", "source-layer": "transportation",
+      minzoom: 8, filter: ["in", "class", "secondary", "tertiary"],
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": SECOND,
+        "line-width": ["interpolate", ["exponential", 1.6], ["zoom"], 8, 0.6, 12, 2.1, 14, 4.4, 18, 17] } },
+
+    /* ---- trunk / primary: near-white ---- */
+    { id: "road-pri-case", type: "line", source: "omt", "source-layer": "transportation",
+      minzoom: 6, filter: ["in", "class", "trunk", "primary"],
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": CASE_DK,
+        "line-width": ["interpolate", ["exponential", 1.6], ["zoom"], 6, 1.4, 10, 3.6, 14, 8.5, 18, 27] } },
+    { id: "road-pri", type: "line", source: "omt", "source-layer": "transportation",
+      minzoom: 6, filter: ["in", "class", "trunk", "primary"],
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": PRIMARY,
+        "line-width": ["interpolate", ["exponential", 1.6], ["zoom"], 6, 0.8, 10, 2.5, 14, 6.4, 18, 22] } },
+
+    /* ---- motorway: brightest, widest ---- */
+    { id: "road-mwy-case", type: "line", source: "omt", "source-layer": "transportation",
+      filter: ["==", "class", "motorway"],
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": CASE_DK,
+        "line-width": ["interpolate", ["exponential", 1.6], ["zoom"], 6, 2.2, 10, 5, 14, 10.5, 18, 33] } },
+    { id: "road-mwy", type: "line", source: "omt", "source-layer": "transportation",
+      filter: ["==", "class", "motorway"],
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": MWY,
+        "line-width": ["interpolate", ["exponential", 1.6], ["zoom"], 6, 1.3, 10, 3.5, 14, 8.2, 18, 27] } },
+
+    { id: "road-path", type: "line", source: "omt", "source-layer": "transportation",
+      minzoom: 14, filter: ["==", "class", "path"],
+      paint: { "line-color": "#5a5a5a", "line-width": 1.1, "line-dasharray": [2, 2] } },
+
+    { id: "building", type: "fill", source: "omt", "source-layer": "building",
+      minzoom: 13,
+      paint: { "fill-color": BUILDING, "fill-opacity": 0.85, "fill-outline-color": "#262624" } },
+
+    { id: "boundary-state", type: "line", source: "omt", "source-layer": "boundary",
+      filter: ["all", ["==", "admin_level", 4], ["!=", "maritime", 1]],
+      paint: { "line-color": "#4a4c4a", "line-width": 1.3, "line-dasharray": [4, 2, 1, 2] } },
+
+    /* ---- labels ---- */
+    { id: "road-label", type: "symbol", source: "omt", "source-layer": "transportation_name",
+      minzoom: 13,
+      layout: {
+        "symbol-placement": "line",
+        "text-field": ["get", "name"],
+        "text-font": ["Noto Sans Regular"],
+        "text-size": ["interpolate", ["linear"], ["zoom"], 13, 10, 18, 14],
+        "text-letter-spacing": 0.05
+      },
+      paint: { "text-color": "#cfcfcf", "text-halo-color": HALO, "text-halo-width": 1.6 } },
+
+    { id: "water-label", type: "symbol", source: "omt", "source-layer": "water_name",
+      layout: {
+        "text-field": ["get", "name"],
+        "text-font": ["Noto Sans Italic"],
+        "text-size": ["interpolate", ["linear"], ["zoom"], 6, 11, 12, 15],
+        "text-letter-spacing": 0.15
+      },
+      paint: { "text-color": "#8fa4ab", "text-halo-color": "#0b0f10", "text-halo-width": 1.2 } },
+
+    { id: "place-village", type: "symbol", source: "omt", "source-layer": "place",
+      minzoom: 10, filter: ["in", "class", "village", "hamlet", "suburb", "neighbourhood"],
+      layout: {
+        "text-field": ["get", "name"],
+        "text-font": ["Noto Sans Regular"],
+        "text-size": ["interpolate", ["linear"], ["zoom"], 10, 10, 14, 13],
+        "text-transform": "uppercase", "text-letter-spacing": 0.1
+      },
+      paint: { "text-color": "#b0b0b0", "text-halo-color": HALO, "text-halo-width": 1.4 } },
+
+    { id: "place-town", type: "symbol", source: "omt", "source-layer": "place",
+      minzoom: 8, filter: ["==", "class", "town"],
+      layout: {
+        "text-field": ["get", "name"],
+        "text-font": ["Noto Sans Regular"],
+        "text-size": ["interpolate", ["linear"], ["zoom"], 8, 11, 13, 15],
+        "text-transform": "uppercase", "text-letter-spacing": 0.12
+      },
+      paint: { "text-color": "#d8d8d8", "text-halo-color": HALO, "text-halo-width": 1.6 } },
+
+    { id: "place-city", type: "symbol", source: "omt", "source-layer": "place",
+      filter: ["==", "class", "city"],
+      layout: {
+        "text-field": ["get", "name"],
+        "text-font": ["Noto Sans Bold"],
+        "text-size": ["interpolate", ["linear"], ["zoom"], 5, 12, 9, 16, 13, 20],
+        "text-transform": "uppercase", "text-letter-spacing": 0.15
+      },
+      paint: { "text-color": "#ffffff", "text-halo-color": HALO, "text-halo-width": 2 } },
+
+    { id: "place-state", type: "symbol", source: "omt", "source-layer": "place",
+      maxzoom: 8, filter: ["==", "class", "state"],
+      layout: {
+        "text-field": ["get", "name"],
+        "text-font": ["Noto Sans Bold"],
+        "text-size": ["interpolate", ["linear"], ["zoom"], 5, 12, 8, 18],
+        "text-transform": "uppercase", "text-letter-spacing": 0.35
+      },
+      paint: { "text-color": "#9aa0a0", "text-halo-color": HALO, "text-halo-width": 1.4, "text-opacity": 0.75 } }
+  ]
+};
+
+const map = new maplibregl.Map({
+  container: "map",
+  style: style,
+  center: [-71.4128, 41.8240],   // Providence, RI (the safehouse)
+  zoom: 16.5,                    // street level — scale bar reads 200 ft
+  minZoom: 6,
+  maxZoom: 18,
+  maxBounds: [[-74.4, 40.6], [-66.3, 47.8]],   // New England
+  attributionControl: false,
+  fadeDuration: 150,            // snappier label fades, less per-frame blend work
+  refreshExpiredTiles: false    // don't re-poll tiles the phone already has
+});
+
+map.addControl(new maplibregl.AttributionControl({
+  compact: true,
+  customAttribution: "© OpenFreeMap © OpenStreetMap contributors"
+}));
+/* smooth, GTA-clean zoom: eased buttons, gentler wheel, no accidental rotation */
+map.dragRotate.disable();
+map.touchZoomRotate.disableRotation();
+map.touchPitch && map.touchPitch.disable();
+map.scrollZoom.setWheelZoomRate(1 / 700);
+map.scrollZoom.setZoomRate(1 / 140);
+
+const easeZoom = (dir) => map.easeTo({
+  zoom: map.getZoom() + dir,
+  duration: 480,
+  easing: t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
+});
+class ZoomCtrl {
+  onAdd() {
+    const c = document.createElement("div");
+    c.className = "maplibregl-ctrl maplibregl-ctrl-group";
+    [["+", 1], ["−", -1]].forEach(([txt, dir]) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "zoom-btn"; b.textContent = txt;
+      b.addEventListener("click", () => easeZoom(dir));
+      c.appendChild(b);
+    });
+    this._c = c; return c;
+  }
+  onRemove() { this._c.remove(); }
+}
+map.addControl(new ZoomCtrl(), "top-right");
+const geolocate = new maplibregl.GeolocateControl({
+  positionOptions: { enableHighAccuracy: true },
+  trackUserLocation: true
+});
+map.addControl(geolocate, "top-right");
+map.addControl(new maplibregl.ScaleControl({ maxWidth: 120, unit: "imperial" }), "bottom-left");
+
+/* ---- GTA-style location blips ----
+   POI positions come from the OSM data already inside the free map tiles —
+   no live service or API needed. Add your own spots to CUSTOM_LOCATIONS below. */
+const CUSTOM_LOCATIONS = [
+  { name: "Safehouse", icon: "home", lng: -71.4128, lat: 41.8240 }   // example — edit me
+];
+
+const S = (body) => "data:image/svg+xml;charset=utf-8," + encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">' +
+  '<g fill="#ffffff" stroke="#000000" stroke-width="3" stroke-linejoin="round">' + body + "</g></svg>");
+
+const BLIP_SVGS = {
+  police:   S('<path d="M32 5 L38.8 23.6 58.5 24.1 42.9 36.2 48.5 55.1 32 43.9 15.5 55.1 21.1 36.2 5.5 24.1 25.2 23.6 Z"/>'),
+  hospital: S('<path d="M23 8 H41 V23 H56 V41 H41 V56 H23 V41 H8 V23 H23 Z"/>'),
+  clothing: S('<path d="M22 7 L9 15 L14 28 L20 25 V57 H44 V25 L50 28 L55 15 L42 7 C41 13 23 13 22 7 Z"/>'),
+  barber:   S('<path d="M21 5 L37 38" fill="none" stroke="#000" stroke-width="9"/><path d="M43 5 L27 38" fill="none" stroke="#000" stroke-width="9"/><path d="M21 5 L37 38" fill="none" stroke="#fff" stroke-width="5"/><path d="M43 5 L27 38" fill="none" stroke="#fff" stroke-width="5"/><circle cx="23" cy="49" r="8" fill="none" stroke="#fff" stroke-width="5"/><circle cx="41" cy="49" r="8" fill="none" stroke="#fff" stroke-width="5"/>'),
+  cafe:     S('<path d="M11 19 H45 V38 C45 49 36 55 28 55 C20 55 11 49 11 38 Z"/><path d="M45 23 H51 C59 23 59 38 51 38 H45" fill="none" stroke="#fff" stroke-width="5"/>'),
+  pharmacy: S('<g transform="rotate(-35 32 32)"><rect x="12" y="24" width="40" height="17" rx="8.5"/><path d="M32 24 L32 41" stroke="#000" stroke-width="3" fill="none"/></g>'),
+  liquor:   S('<path d="M27 6 H37 V16 C37 23 43 22 43 31 V57 H21 V31 C21 22 27 23 27 16 Z"/><rect x="25" y="34" width="14" height="10" fill="#000" stroke="none"/>'),
+  hotel:    S('<path d="M7 18 V53 H14 V45 H50 V53 H57 V33 C57 27 51 24 44 24 H27 V39 H14 V18 Z"/><circle cx="20" cy="31" r="5.5"/>'),
+  garage:   S('<path d="M43 5 C34 7 29 16 32 24 L9 46 C5 50 11 58 16 54 L39 32 C47 35 56 29 57 20 L48 25 L39 17 L44 8 Z"/>'),
+  theatre:  S('<path d="M13 9 C25 14 39 14 51 9 C54 30 47 52 32 57 C17 52 10 30 13 9 Z"/><ellipse cx="24" cy="26" rx="4" ry="5.5" fill="#000" stroke="none"/><ellipse cx="40" cy="26" rx="4" ry="5.5" fill="#000" stroke="none"/><path d="M21 39 C27 47 37 47 43 39" fill="none" stroke="#000" stroke-width="4"/>'),
+  fuel:     S('<rect x="13" y="12" width="26" height="40" rx="3"/><rect x="18" y="18" width="16" height="10" fill="#000" stroke="none"/><rect x="9" y="52" width="34" height="6" rx="2"/><path d="M42 22 H49 V42 C49 49 41 49 41 43" fill="none" stroke="#fff" stroke-width="5"/><path d="M42 22 H49 V42 C49 49 41 49 41 43" fill="none" stroke="#000" stroke-width="2"/>'),
+  bank:     S('<text x="32" y="51" font-family="Arial, sans-serif" font-size="54" font-weight="bold" text-anchor="middle" paint-order="stroke">$</text>'),
+  bar:      S('<path d="M10 12 H54 L35 34 V50 H45 V56 H19 V50 H29 V34 Z"/>'),
+  food:     S('<path d="M18 8 V22 M24 8 V22 M30 8 V22" fill="none" stroke="#000" stroke-width="7"/><path d="M18 8 V22 M24 8 V22 M30 8 V22" fill="none" stroke="#fff" stroke-width="3.5"/><path d="M21 22 C15 26 15 30 18 32 L20 56 H26 L26 32 C31 30 31 26 27 22 Z"/><path d="M42 8 C36 18 36 28 40 32 L38 56 H46 L45 32 C48 24 48 14 44 8 Z"/>'),
+  cinema:   S('<circle cx="19" cy="16" r="8"/><circle cx="37" cy="16" r="8"/><rect x="10" y="24" width="32" height="24" rx="3"/><path d="M42 30 L56 24 V48 L42 42 Z"/>'),
+  grocery:  S('<path d="M22 24 C22 8 42 8 42 24" fill="none" stroke="#fff" stroke-width="4"/><path d="M12 24 H52 L45 54 H19 Z"/>'),
+  airport:  S('<path d="M32 5 L36 10 36 24 55 36 55 42 36 35 35 48 42 54 42 58 32 55 22 58 22 54 29 48 28 35 9 42 9 36 28 24 28 10 Z"/>'),
+  marina:   S('<circle cx="32" cy="13" r="6" fill="none" stroke="#fff" stroke-width="5"/><circle cx="32" cy="13" r="6" fill="none" stroke="#000" stroke-width="2"/><rect x="29.5" y="19" width="5" height="30"/><rect x="21" y="25" width="22" height="5"/><path d="M12 36 C13 52 51 52 52 36 L45 40 C44 47 20 47 19 40 Z"/>'),
+  golf:     S('<rect x="28" y="8" width="5" height="46"/><path d="M33 9 L54 17 L33 25 Z"/><ellipse cx="30" cy="56" rx="14" ry="4"/>'),
+  home:     S('<path d="M32 6 L58 30 H50 V56 H14 V30 H6 Z"/><rect x="27" y="38" width="10" height="18" fill="#000" stroke="none"/>'),
+  poi:      S('<path d="M32 4 C20 4 12 13 12 24 C12 38 32 60 32 60 C32 60 52 38 52 24 C52 13 44 4 32 4 Z"/><circle cx="32" cy="23" r="8" fill="#000" stroke="none"/>')
+};
+
+const BLIP_CATS = [
+  { id: "police",   label: "Police",    cls: ["police"], on: true },
+  { id: "hospital", label: "Hospital",  cls: ["hospital"], on: true },
+  { id: "fuel",     label: "Gas",       cls: ["fuel"], on: true },
+  { id: "bank",     label: "Bank",      cls: ["bank"], on: true },
+  { id: "bar",      label: "Bar",       cls: ["bar", "beer"], on: true },
+  { id: "food",     label: "Food",      cls: ["restaurant", "fast_food"], on: true },
+  { id: "cafe",     label: "Coffee",    cls: ["cafe"], on: true },
+  { id: "cinema",   label: "Cinema",    cls: ["cinema"], on: true },
+  { id: "theatre",  label: "Theater",   cls: ["theatre"], on: true },
+  { id: "grocery",  label: "Store",     filter: ["any", ["in", "class", "grocery"], ["in", "subclass", "convenience", "supermarket", "general", "variety_store", "deli"]], on: true },
+  { id: "clothing", label: "Clothes",   filter: ["any", ["in", "class", "clothing_store"], ["in", "subclass", "clothes", "fashion", "shoes", "boutique"]], on: true },
+  { id: "barber",   label: "Barber",    filter: ["in", "subclass", "hairdresser", "beauty", "barber"], on: true },
+  { id: "pharmacy", label: "Pharmacy",  filter: ["any", ["in", "class", "pharmacy"], ["in", "subclass", "pharmacy", "chemist"]], on: true },
+  { id: "liquor",   label: "Liquor",    filter: ["any", ["in", "class", "alcohol_shop"], ["in", "subclass", "alcohol", "wine", "beverages"]], on: true },
+  { id: "hotel",    label: "Hotel",     filter: ["any", ["in", "class", "lodging"], ["in", "subclass", "hotel", "motel", "hostel", "guest_house", "bed_and_breakfast"]], on: true },
+  { id: "garage",   label: "Garage",    filter: ["any", ["in", "class", "car"], ["in", "subclass", "car_repair", "car_parts", "car_wash"]], on: true },
+  { id: "golf",     label: "Golf",      cls: ["golf"], on: true },
+  { id: "marina",   label: "Marina",    cls: ["harbor"], on: true },
+  { id: "airport",  label: "Airport",   special: "aerodrome", on: true },
+  { id: "home",     label: "Custom",    special: "custom", on: true }
+];
+
+function loadBlipImage(id) {
+  return new Promise((resolve) => {
+    const img = new Image(64, 64);
+    img.onload = () => { if (!map.hasImage("blip-" + id)) map.addImage("blip-" + id, img, { pixelRatio: 2 }); resolve(); };
+    img.onerror = () => resolve();
+    img.src = BLIP_SVGS[id];
+  });
+}
+
+map.on("load", async () => {
+  await Promise.all(Object.keys(BLIP_SVGS).map(loadBlipImage));
+
+  window._customFeats = CUSTOM_LOCATIONS.map((l, i) => ({
+    type: "Feature", properties: { icon: l.icon, name: l.name, pid: "c" + i },
+    geometry: { type: "Point", coordinates: [l.lng, l.lat] }
+  }));
+  map.addSource("custom-locations", { type: "geojson",
+    data: { type: "FeatureCollection", features: window._customFeats } });
+
+  /* GTA-style: blips stay LARGE when zoomed out (airports, hospitals at region scale), ease down mid-zoom, bold again at street level */
+  const ICON_SIZE = ["interpolate", ["linear"], ["zoom"], 6, 1.2, 9, 1.0, 12, 0.82, 15, 0.72, 17, 0.88];
+  const beforeId = map.getLayer("route-case") ? "route-case" : undefined;
+
+  for (const cat of BLIP_CATS) {
+    const vis = cat.on ? "visible" : "none";
+    if (cat.special === "custom") {
+      map.addLayer({
+        id: "blip-layer-" + cat.id, type: "symbol", source: "custom-locations",
+        layout: {
+          "icon-image": ["concat", "blip-", ["get", "icon"]],
+          "icon-size": ["interpolate", ["linear"], ["zoom"], 6, 1.2, 9, 1.0, 12, 0.82, 15, 0.72, 17, 0.88],
+          "icon-allow-overlap": true, "visibility": vis,
+          "text-field": ["get", "name"], "text-font": ["Noto Sans Regular"],
+          "text-size": 11.5, "text-transform": "uppercase", "text-letter-spacing": 0.08,
+          "text-offset": [0, 1.8], "text-anchor": "top", "text-optional": true
+        },
+        paint: { "text-color": "#ffffff", "text-halo-color": "#0b0b0b", "text-halo-width": 1.4 }
+      }, beforeId);
+    } else if (cat.special === "aerodrome") {
+      map.addLayer({
+        id: "blip-layer-" + cat.id, type: "symbol", source: "omt", "source-layer": "aerodrome_label",
+        minzoom: 9,
+        layout: { "icon-image": "blip-airport", "icon-size": ICON_SIZE, "visibility": vis },
+      }, beforeId);
+    } else {
+      map.addLayer({
+        id: "blip-layer-" + cat.id, type: "symbol", source: "omt", "source-layer": "poi",
+        minzoom: 13, filter: cat.filter || ["in", "class"].concat(cat.cls),
+        layout: { "icon-image": "blip-" + cat.id, "icon-size": ICON_SIZE, "visibility": vis },
+      }, beforeId);
+    }
+  }
+
+  window._blipLayers = BLIP_CATS.map(c => "blip-layer-" + c.id);
+  window._blipLayers.forEach(id => {
+    map.on("mouseenter", id, () => map.getCanvas().style.cursor = "pointer");
+    map.on("mouseleave", id, () => map.getCanvas().style.cursor = "");
+  });
+});
+
+/* ---- search (Nominatim, free, bounded to New England) ---- */
+const searchInput = document.getElementById("searchinput");
+const searchResults = document.getElementById("searchresults");
+let searching = false;
+
+async function runSearch() {
+  const q = searchInput.value.trim();
+  if (!q || searching) return;
+  searching = true;
+  searchResults.innerHTML = '<div class="sr"><div class="sr-d">Searching…</div></div>';
+  searchResults.classList.add("show");
+  try {
+    const org = routeOrigin();
+    let url = "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&addressdetails=1&q=" + encodeURIComponent(q);
+    if (org) {
+      // bias results to ~35mi around the start (or safehouse), without excluding farther matches
+      url += "&viewbox=" + (org.pt[0] - 0.5) + "," + (org.pt[1] + 0.5) + "," + (org.pt[0] + 0.5) + "," + (org.pt[1] - 0.5);
+    } else {
+      url += "&bounded=1&viewbox=-74.4,47.8,-66.3,40.6";
+    }
+    const res = await fetch(url, { signal: AbortSignal.timeout(9000) });
+    const list = await res.json();
+    if (org) list.sort((a, b) => milesBetween(org.pt, [+a.lon, +a.lat]) - milesBetween(org.pt, [+b.lon, +b.lat]));
+    searchResults.innerHTML = "";
+    if (!list.length) {
+      searchResults.innerHTML = '<div class="sr"><div class="sr-d">No results in New England</div></div>';
+    }
+    list.forEach(r => {
+      const div = document.createElement("div");
+      div.className = "sr";
+      const parts = r.display_name.split(", ");
+      const org2 = routeOrigin();
+      const distTag = org2 ? milesBetween(org2.pt, [+r.lon, +r.lat]).toFixed(1) + " mi • " : "";
+      div.innerHTML = '<div class="sr-n">' + esc(parts[0]) + '</div><div class="sr-d">' +
+        distTag + esc(parts.slice(1, 4).join(", ")) + "</div>";
+      div.addEventListener("click", () => {
+        searchResults.classList.remove("show");
+        searchInput.blur();
+        const lng = +r.lon, lat = +r.lat;
+        map.flyTo({ center: [lng, lat], zoom: Math.max(map.getZoom(), 14.5), duration: 1600 });
+        cardTarget = [lng, lat]; cardPid = null; cardCat = r.type ? r.type.replace(/_/g, " ") : "Search Result";
+        card.querySelector(".pc-name").textContent = parts[0];
+        card.querySelector(".pc-cat").textContent = cardCat;
+        const o3 = routeOrigin();
+        card.querySelector(".pc-rows").innerHTML =
+          (o3 ? '<div><span class="lbl">Dist</span>' + milesBetween(o3.pt, [lng, lat]).toFixed(1) + " mi" + (o3.from === "safehouse" ? " from safehouse" : "") + "</div>" : "") +
+          '<div><span class="lbl">Addr</span>' + esc(parts.slice(1, 5).join(", ")) + "</div>";
+        card.querySelector(".pc-loading").textContent = "";
+        document.getElementById("pc-remove").style.display = "none";
+        card.classList.add("show");
+        enrichPlace(lat, lng, parts[0], "search");   // pull hours/phone/website for search results too
+      });
+      searchResults.appendChild(div);
+    });
+  } catch (err) {
+    searchResults.innerHTML = '<div class="sr"><div class="sr-d">Search unavailable — check connection</div></div>';
+  }
+  searching = false;
+}
+document.getElementById("searchgo").addEventListener("click", runSearch);
+searchInput.addEventListener("keydown", (e) => { if (e.key === "Enter") runSearch(); });
+searchInput.addEventListener("input", () => { if (!searchInput.value.trim()) searchResults.classList.remove("show"); });
+
+/* ---- legend tap = generalized nearby search for that category ---- */
+const CAT_QUERY = {
+  police: ['amenity~"^police$"'], hospital: ['amenity~"^(hospital|clinic)$"'],
+  fuel: ['amenity~"^fuel$"'], bank: ['amenity~"^bank$"'], bar: ['amenity~"^(bar|pub)$"'],
+  food: ['amenity~"^(restaurant|fast_food)$"'], cafe: ['amenity~"^cafe$"'],
+  cinema: ['amenity~"^cinema$"'], theatre: ['amenity~"^theatre$"'],
+  grocery: ['shop~"^(convenience|supermarket|general|deli)$"'],
+  clothing: ['shop~"^(clothes|shoes|boutique|fashion)$"'],
+  barber: ['shop~"^(hairdresser|beauty)$"'], pharmacy: ['amenity~"^pharmacy$"'],
+  liquor: ['shop~"^(alcohol|wine)$"'], hotel: ['tourism~"^(hotel|motel|guest_house|hostel)$"'],
+  garage: ['shop~"^(car_repair|car_parts|car)$"'], golf: ['leisure~"^golf_course$"'],
+  marina: ['leisure~"^marina$"'], airport: ['aeroway~"^aerodrome$"']
+};
+
+async function categorySearch(cat) {
+  const sel = CAT_QUERY[cat.id];
+  if (!sel) return false;
+  const o = routeOrigin();
+  const c = o ? o.pt : (() => { const m = map.getCenter(); return [m.lng, m.lat]; })();
+  searchResults.innerHTML = '<div class="sr"><div class="sr-d">Finding nearest ' + esc(cat.label.toLowerCase()) + '…</div></div>';
+  searchResults.classList.add("show");
+  try {
+    const body = sel.map(s => "nwr[" + s + '][name](around:12000,' + c[1] + "," + c[0] + ");").join("");
+    const q = "[out:json][timeout:9];(" + body + ");out tags center 40;";
+    const res = await fetch("https://overpass-api.de/api/interpreter", {
+      method: "POST", body: "data=" + encodeURIComponent(q),
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      signal: AbortSignal.timeout(9000)
+    });
+    const j = await res.json();
+    const items = (j.elements || [])
+      .map(el => ({ name: el.tags && el.tags.name, lng: el.lon || (el.center && el.center.lon), lat: el.lat || (el.center && el.center.lat), street: el.tags && el.tags["addr:street"] }))
+      .filter(it => it.name && it.lng != null)
+      .map(it => ({ ...it, dist: milesBetween(c, [it.lng, it.lat]) }))
+      .sort((a, b) => a.dist - b.dist).slice(0, 8);
+    searchResults.innerHTML = "";
+    if (!items.length) {
+      searchResults.innerHTML = '<div class="sr"><div class="sr-d">No ' + esc(cat.label.toLowerCase()) + " found within ~7 mi</div></div>";
+      return true;
+    }
+    // fly the camera to frame the start/safehouse and the nearest results so the blips are actually visible
+    const b = new maplibregl.LngLatBounds();
+    b.extend(c);
+    items.slice(0, 4).forEach(it => b.extend([it.lng, it.lat]));
+    map.fitBounds(b, { padding: 90, maxZoom: 15.5, duration: 1200 });
+    items.forEach(it => {
+      const div = document.createElement("div");
+      div.className = "sr";
+      div.innerHTML = '<div class="sr-n">' + esc(it.name) + '</div><div class="sr-d">' +
+        it.dist.toFixed(1) + " mi" + (it.street ? " • " + esc(it.street) : "") + "</div>";
+      div.addEventListener("click", () => {
+        searchResults.classList.remove("show");
+        map.flyTo({ center: [it.lng, it.lat], zoom: Math.max(map.getZoom(), 15), duration: 1400 });
+        cardTarget = [it.lng, it.lat]; cardPid = null; cardCat = cat.label;
+        card.querySelector(".pc-name").textContent = it.name;
+        card.querySelector(".pc-cat").textContent = cat.label;
+        card.querySelector(".pc-rows").innerHTML = '<div><span class="lbl">Dist</span>' + it.dist.toFixed(1) + " mi</div>";
+        card.querySelector(".pc-loading").textContent = "";
+        document.getElementById("pc-remove").style.display = "none";
+        card.classList.add("show");
+        enrichPlace(it.lat, it.lng, it.name, cat.id);
+      });
+      searchResults.appendChild(div);
+    });
+    return true;
+  } catch (err) {
+    searchResults.classList.remove("show");
+    return false;   // offline: caller falls back to zoom-in behavior
+  }
+}
+
+/* blip legend UI */
+const blipsPanel = document.getElementById("blips");
+const legendToggle = blipsPanel.querySelector(".legend-toggle");
+legendToggle.addEventListener("click", () => {
+  blipsPanel.classList.toggle("open");
+  legendToggle.textContent = blipsPanel.classList.contains("open") ? "Blips ▴" : "Blips ▾";
+});
+const itemsBox = blipsPanel.querySelector(".items");
+const legendHint = document.createElement("div");
+legendHint.className = "legend-hint";
+legendHint.textContent = "tap show • hold hide";
+itemsBox.appendChild(legendHint);
+BLIP_CATS.forEach(cat => {
+  const row = document.createElement("div");
+  row.className = "blip-item" + (cat.on ? "" : " off");
+  const img = document.createElement("img");
+  img.src = BLIP_SVGS[cat.id];
+  const span = document.createElement("span");
+  span.textContent = cat.label;
+  row.appendChild(span); row.appendChild(img);
+  /* tap = show the category (zooming in if blips aren't visible at this zoom); hold = hide it */
+  const setVis = (on) => {
+    cat.on = on;
+    row.classList.toggle("off", !on);
+    const layer = "blip-layer-" + cat.id;
+    if (map.getLayer(layer)) map.setLayoutProperty(layer, "visibility", on ? "visible" : "none");
+  };
+  let holdTimer = null, held = false;
+  row.addEventListener("pointerdown", () => {
+    held = false;
+    holdTimer = setTimeout(() => { held = true; setVis(false); showToast(cat.label + " blips hidden"); }, 500);
+  });
+  ["pointerup", "pointerleave", "pointercancel"].forEach(ev => row.addEventListener(ev, () => clearTimeout(holdTimer)));
+  row.addEventListener("contextmenu", (e) => e.preventDefault());
+  row.addEventListener("click", async () => {
+    if (held) { held = false; return; }
+    setVis(true);
+    const searched = cat.special === "custom" ? false : await categorySearch(cat);
+    if (searched) return;                               // nearest-list shown + camera framed on the results
+    // offline fallback: center on the start/safehouse at a zoom where blips actually render (14+)
+    const minz = cat.special === "aerodrome" ? 9 : cat.special === "custom" ? null : 14;
+    if (minz && map.getZoom() < minz - 0.2) {
+      const o = routeOrigin();
+      map.easeTo({ zoom: minz, center: o ? o.pt : map.getCenter(), duration: 900 });
+      showToast(cat.label + " blips shown — zooming in");
+    } else {
+      showToast(cat.label + " blips shown");
+    }
+  });
+  itemsBox.appendChild(row);
+});
+
+/* ---- GTA-style waypoint + GPS route line ---- */
+const toast = document.getElementById("toast");
+let toastTimer = null;
+let waypoint = null;       // purple destination blip
+let playerMarker = null;   // white origin blip (when GPS is off)
+let playerPos = null;      // [lng, lat] from geolocation or manual tap
+let routeColor = "#ffe14d";
+const EMPTY = { type: "FeatureCollection", features: [] };
+
+map.on("load", () => {
+  map.addSource("route", { type: "geojson", data: EMPTY });
+  map.addLayer({
+    id: "route-case", type: "line", source: "route",
+    layout: { "line-cap": "round", "line-join": "round" },
+    paint: { "line-color": "rgba(0,0,0,0.55)",
+      "line-width": ["interpolate", ["exponential", 1.5], ["zoom"], 8, 7, 14, 11, 18, 16] }
+  });
+  map.addLayer({
+    id: "route-line", type: "line", source: "route",
+    layout: { "line-cap": "round", "line-join": "round" },
+    paint: { "line-color": routeColor,
+      "line-width": ["interpolate", ["exponential", 1.5], ["zoom"], 8, 4.5, 14, 7.5, 18, 11] }
+  });
+});
+
+/* live GPS tracking: GTA arrow follows every position update, rotates to heading, re-routes as you move */
+let liveMarker = null, liveIcon = null, lastRouteOrigin = null;
+const rbSpeedEl = document.getElementById("rb-speed");
+geolocate.on("geolocate", (pos) => {
+  playerPos = [pos.coords.longitude, pos.coords.latitude];
+  if (playerMarker) { playerMarker.remove(); playerMarker = null; }  // GPS arrow replaces manual blip
+  if (!liveMarker) {
+    const root = document.createElement("div");
+    const wrap = document.createElement("div"); wrap.className = "player-live-wrap";
+    liveIcon = document.createElement("div"); liveIcon.className = "player-live";
+    wrap.appendChild(liveIcon); root.appendChild(wrap);
+    liveMarker = new maplibregl.Marker({ element: root }).setLngLat(playerPos).addTo(map);
+  } else {
+    liveMarker.setLngLat(playerPos);
+  }
+  const h = pos.coords.heading;
+  if (typeof h === "number" && !isNaN(h)) liveIcon.style.transform = "rotate(" + h + "deg)";
+  // live speed readout on the route bar (cached ref — this handler runs on every GPS tick)
+  const spd = pos.coords.speed;
+  const spdTxt = (typeof spd === "number" && !isNaN(spd) && spd > 0.7) ? Math.round(spd * 2.23694) + " mph" : "";
+  if (rbSpeedEl.textContent !== spdTxt) rbSpeedEl.textContent = spdTxt;
+  // re-route once you've moved ~100m from where the current route started
+  if (waypoint && (!lastRouteOrigin || milesBetween(lastRouteOrigin, playerPos) > 0.06)) drawRoute();
+});
+geolocate.on("trackuserlocationend", () => {
+  if (liveMarker) { liveMarker.remove(); liveMarker = null; liveIcon = null; }
+});
+
+/* markers get a wrapper so the inner blip can scale with zoom */
+function mkMarkerEl(cls) {
+  const root = document.createElement("div");
+  const el = document.createElement("div");
+  el.className = cls;
+  root.appendChild(el);
+  return { root, el };
+}
+let blipScaleRaf = 0, lastBlipScale = "";
+function updateBlipScale() {
+  if (blipScaleRaf) return;                       // coalesce to one update per frame
+  blipScaleRaf = requestAnimationFrame(() => {
+    blipScaleRaf = 0;
+    // bigger when zoomed OUT (GTA blips stay dominant at map scale), settling smaller street-level
+    const s = Math.min(1.55, Math.max(0.7, 1.55 - (map.getZoom() - 6) * 0.085)).toFixed(3);
+    if (s !== lastBlipScale) {                    // skip no-op style recalcs
+      lastBlipScale = s;
+      document.documentElement.style.setProperty("--blip-scale", s);
+    }
+  });
+}
+map.on("zoom", updateBlipScale);
+updateBlipScale();
+
+/* compass waypoint SVG tinted to any color */
+function waypointSvg(color) {
+  const stroke = color.toLowerCase() === "#ffffff" ? "#222222" : "#ffffff";
+  const svg = "<svg xmlns='http://www.w3.org/2000/svg' width='64' height='64' viewBox='0 0 64 64'>" +
+    "<g fill='" + color + "' stroke='" + stroke + "' stroke-width='3' stroke-linejoin='round'>" +
+    "<path d='M32 2 L42 15 H36 V22 H28 V15 H22 Z'/><path d='M32 62 L22 49 H28 V42 H36 V49 H42 Z'/>" +
+    "<path d='M2 32 L15 22 V28 H22 V36 H15 V42 Z'/><path d='M62 32 L49 42 V36 H42 V28 H49 V22 Z'/>" +
+    "<circle cx='32' cy='32' r='9' fill='none' stroke-width='5'/></g></svg>";
+  return "url(\"data:image/svg+xml," + encodeURIComponent(svg) + "\")";
+}
+
+let waypointEl = null;
+function placeWaypoint(pt) {
+  const { root, el } = mkMarkerEl("waypoint");
+  el.style.backgroundImage = waypointSvg(routeColor);
+  if (waypoint) waypoint.remove();
+  waypoint = new maplibregl.Marker({ element: root }).setLngLat(pt).addTo(map);
+  waypointEl = el;
+  el.addEventListener("click", (ev) => { ev.stopPropagation(); clearRoute(); });
+  showToast("Waypoint set");
+  drawRoute();
+}
+
+function setStart(pt) {
+  playerPos = pt;
+  if (playerMarker) { playerMarker.remove(); playerMarker = null; }
+  const { root, el } = mkMarkerEl("player");
+  playerMarker = new maplibregl.Marker({ element: root }).setLngLat(pt).addTo(map);
+  el.addEventListener("click", (ev) => { ev.stopPropagation(); clearStart(); });
+  showToast(waypoint ? "Start set" : "Start set — tap destination");
+  if (waypoint) drawRoute();
+}
+
+function clearStart() {
+  playerPos = null;
+  if (playerMarker) { playerMarker.remove(); playerMarker = null; }
+  if (map.getSource("route")) map.getSource("route").setData(EMPTY);
+  showToast("Start cleared — tap map to set start");
+}
+document.getElementById("resetstart").addEventListener("click", clearStart);
+
+let poiJustAdded = false;
+map.on("click", (e) => {
+  if (poiJustAdded) { poiJustAdded = false; return; }  // ignore the tap released after a POI hold
+  searchResults.classList.remove("show");              // tapping the map dismisses search results
+  const layers = (window._blipLayers || []).filter(id => map.getLayer(id));
+  const hits = layers.length ? map.queryRenderedFeatures(e.point, { layers }) : [];
+  if (hits.length) { openPlaceCard(hits[0]); return; }
+  if (card.classList.contains("show")) { hidePlaceCard(); return; }  // first outside tap just closes the card
+  const pt = [e.lngLat.lng, e.lngLat.lat];
+  if (!playerPos) { setStart(pt); return; }   // no start yet: first tap places the white "player" blip
+  placeWaypoint(pt);
+});
+
+/* ---- GTA-style place info card ---- */
+const CLASS_LABELS = { police: "Police Station", hospital: "Hospital", fuel: "Gas Station",
+  bank: "Bank", bar: "Bar", beer: "Bar", restaurant: "Restaurant", fast_food: "Fast Food",
+  cinema: "Movie Theater", grocery: "Grocery Store", golf: "Golf Course", harbor: "Marina" };
+const card = document.getElementById("placecard");
+function milesBetween(a, b) {
+  const dx = (b[0] - a[0]) * 69.17 * Math.cos(b[1] * Math.PI / 180);
+  const dy = (b[1] - a[1]) * 69.05;
+  return Math.hypot(dx, dy);
+}
+/* origin for distances & search bias: the start blip if set, else the safehouse */
+function routeOrigin() {
+  if (playerPos) return { pt: playerPos, from: "start" };
+  const sh = (window._customFeats || []).find(f => f.properties.name === "Safehouse");
+  return sh ? { pt: sh.geometry.coordinates, from: "safehouse" } : null;
+}
+const esc = (s) => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+let cardTarget = null, cardPid = null, cardCat = "", enrichSeq = 0;
+
+/* minimal opening_hours evaluator: handles "24/7" and "Mo-Fr 09:00-17:00; Sa 10:00-14:00" style rules */
+function openNow(oh) {
+  try {
+    oh = oh.trim();
+    if (oh === "24/7") return true;
+    const days = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
+    const now = new Date(), today = now.getDay(), mins = now.getHours() * 60 + now.getMinutes();
+    let open = false;
+    for (const rule of oh.split(";")) {
+      const r = rule.trim();
+      if (!r || /off|closed/i.test(r)) continue;
+      const m = r.match(/^([A-Za-z,\- ]*?)\s*(\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}(?:\s*,\s*\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2})*)$/);
+      if (!m) return null;                       // pattern we don't understand: no badge
+      const dayset = new Set();
+      const dpart = m[1].trim();
+      if (!dpart) days.forEach((_, i) => dayset.add(i));
+      else for (const tok of dpart.split(",")) {
+        const t = tok.trim(); if (!t) continue;
+        const rng = t.match(/^([A-Za-z]{2})\s*-\s*([A-Za-z]{2})$/);
+        if (rng) {
+          const a = days.indexOf(rng[1]), b = days.indexOf(rng[2]);
+          if (a < 0 || b < 0) return null;
+          for (let i = a; ; i = (i + 1) % 7) { dayset.add(i); if (i === b) break; }
+        } else {
+          const i = days.indexOf(t); if (i < 0) return null; dayset.add(i);
+        }
+      }
+      if (!dayset.has(today)) continue;
+      for (const span of m[2].split(",")) {
+        const [s, e] = span.split("-").map(x => x.trim().split(":").map(Number));
+        const sm = s[0] * 60 + s[1], em = e[0] * 60 + e[1];
+        if (em >= sm ? (mins >= sm && mins < em) : (mins >= sm || mins < em)) open = true;
+      }
+    }
+    return open;
+  } catch (e) { return null; }
+}
+
+function openPlaceCard(f) {
+  const catId = f.layer.id.replace("blip-layer-", "");
+  const p = f.properties || {};
+  const isPOI = catId === "home" && p.icon === "poi";
+  let cat = catId === "home" ? (isPOI ? "Point of Interest" : "Saved Location")
+          : catId === "airport" ? "Airport"
+          : (CLASS_LABELS[p.class] || "Location");
+  const name = p.name || cat;
+  cardTarget = f.geometry.coordinates.slice(0, 2);
+  cardPid = isPOI ? p.pid : null;
+  cardCat = cat;
+  card.querySelector(".pc-name").textContent = name;
+  card.querySelector(".pc-cat").textContent = cat;
+  const rows = card.querySelector(".pc-rows");
+  rows.innerHTML = "";
+  const org = routeOrigin();
+  if (org) {
+    rows.innerHTML = '<div><span class="lbl">Dist</span>' + milesBetween(org.pt, cardTarget).toFixed(1) +
+      " mi" + (org.from === "safehouse" ? " from safehouse" : "") + "</div>";
+  }
+  document.getElementById("pc-remove").style.display = isPOI ? "inline-block" : "none";
+  card.classList.add("show");
+  enrichPlace(cardTarget[1], cardTarget[0], p.name, catId);
+}
+function hidePlaceCard() { card.classList.remove("show"); cardTarget = null; cardPid = null; }
+
+async function enrichPlace(lat, lng, name, catId) {
+  const seq = ++enrichSeq;
+  const rows = card.querySelector(".pc-rows");
+  const loading = card.querySelector(".pc-loading");
+  loading.textContent = "Gathering intel…";
+  const out = {};
+  const jobs = [
+    fetch("https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=18&lat=" + lat + "&lon=" + lng,
+      { signal: AbortSignal.timeout(9000) }).then(r => r.json()).then(j => {
+        const a = j.address || {};
+        const street = [a.house_number, a.road].filter(Boolean).join(" ");
+        const city = a.city || a.town || a.village || a.hamlet || "";
+        out.address = [street, city, a.postcode].filter(Boolean).join(", ") || j.display_name;
+      }).catch(() => {})
+  ];
+  if (catId !== "home") {
+    const q = "[out:json][timeout:8];(nwr(around:50," + lat + "," + lng + ")[amenity];nwr(around:50," + lat + "," + lng + ")[shop];nwr(around:50," + lat + "," + lng + ")[leisure];);out tags 20;";
+    jobs.push(fetch("https://overpass-api.de/api/interpreter", {
+      method: "POST", body: "data=" + encodeURIComponent(q),
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      signal: AbortSignal.timeout(9000)
+    }).then(r => r.json()).then(j => {
+      const els = j.elements || [];
+      const m = els.find(el => el.tags && name && el.tags.name === name) || els.find(el => el.tags && el.tags.name);
+      if (!m) return;
+      const t = m.tags;
+      out.hours = t.opening_hours; out.phone = t.phone || t["contact:phone"];
+      out.web = t.website || t["contact:website"]; out.cuisine = t.cuisine;
+      out.brand = t.brand;
+      if (t["addr:street"]) out.address = [[t["addr:housenumber"], t["addr:street"]].filter(Boolean).join(" "), t["addr:city"]].filter(Boolean).join(", ");
+    }).catch(() => {}));
+  }
+  await Promise.all(jobs);
+  if (seq !== enrichSeq || !card.classList.contains("show")) return;
+  loading.textContent = "";
+  if (out.hours) {
+    const o = openNow(out.hours);
+    if (o !== null) card.querySelector(".pc-cat").innerHTML = esc(cardCat) +
+      '<span class="pc-open ' + (o ? "yes" : "no") + '">' + (o ? "Open" : "Closed") + "</span>";
+  }
+  let html = rows.querySelector("div") ? rows.innerHTML : "";
+  if (out.brand)   html += '<div><span class="lbl">Brand</span>' + esc(out.brand) + "</div>";
+  if (out.address) html += '<div><span class="lbl">Addr</span>' + esc(out.address) + "</div>";
+  if (out.cuisine) html += '<div><span class="lbl">Style</span>' + esc(out.cuisine.replace(/[_;]/g, " ")) + "</div>";
+  if (out.hours)   html += '<div><span class="lbl">Hours</span>' + esc(out.hours) + "</div>";
+  if (out.phone)   html += '<div><span class="lbl">Tel</span>' + esc(out.phone) + "</div>";
+  if (out.web) { try { html += '<div><span class="lbl">Web</span><a href="' + esc(out.web) + '" target="_blank" rel="noopener">' + esc(new URL(out.web).hostname) + "</a></div>"; } catch (e) {} }
+  if (!html) html = '<div style="color:#8a8a8a">No extra intel on file</div>';
+  rows.innerHTML = html;
+}
+
+document.getElementById("pc-close").addEventListener("click", hidePlaceCard);
+document.getElementById("pc-route").addEventListener("click", () => {
+  if (!cardTarget) return;
+  const t = cardTarget; hidePlaceCard();
+  if (!playerPos) {
+    const org = routeOrigin();              // no start yet: route from the safehouse
+    if (org) setStart(org.pt);
+    else { showToast("Tap map to set start first"); return; }
+  }
+  placeWaypoint(t);
+});
+document.getElementById("pc-start").addEventListener("click", () => {
+  if (!cardTarget) return;
+  const t = cardTarget; hidePlaceCard();
+  setStart(t);
+});
+document.getElementById("pc-safehouse").addEventListener("click", () => {
+  if (!cardTarget || !map.getSource("custom-locations")) return;
+  const t = cardTarget.slice();
+  let sh = (window._customFeats || []).find(f => f.properties.icon === "home" && f.properties.pid !== undefined && f.properties.name === "Safehouse");
+  if (sh) {
+    sh.geometry.coordinates = t;
+  } else {
+    window._customFeats.push({ type: "Feature",
+      properties: { icon: "home", name: "Safehouse", pid: "safehouse" },
+      geometry: { type: "Point", coordinates: t } });
+  }
+  map.getSource("custom-locations").setData({ type: "FeatureCollection", features: window._customFeats });
+  hidePlaceCard();
+  showToast("Safehouse relocated");
+});
+document.getElementById("pc-remove").addEventListener("click", () => {
+  if (!cardPid) return;
+  window._customFeats = (window._customFeats || []).filter(f => f.properties.pid !== cardPid);
+  map.getSource("custom-locations").setData({ type: "FeatureCollection", features: window._customFeats });
+  hidePlaceCard(); showToast("Point of interest removed");
+});
+
+/* ---- hold to drop a Point of Interest ---- */
+let pressTimer = null, poiCount = 0;
+function startPress(lngLat) {
+  cancelPress();
+  pressTimer = setTimeout(() => {
+    if (!map.getSource("custom-locations")) return;
+    window._customFeats.push({ type: "Feature",
+      properties: { icon: "poi", name: "Point of Interest", pid: "p" + (++poiCount) },
+      geometry: { type: "Point", coordinates: [lngLat.lng, lngLat.lat] } });
+    map.getSource("custom-locations").setData({ type: "FeatureCollection", features: window._customFeats });
+    showToast("Point of interest marked");
+    poiJustAdded = true;
+    setTimeout(() => poiJustAdded = false, 700);
+  }, 550);
+}
+function cancelPress() { clearTimeout(pressTimer); pressTimer = null; }
+map.on("mousedown", e => startPress(e.lngLat));
+map.on("touchstart", e => e.points && e.points.length === 1 ? startPress(e.lngLat) : cancelPress());
+["mouseup", "touchend", "touchcancel", "touchmove", "drag", "dragstart", "move"].forEach(ev => map.on(ev, cancelPress));
+
+/* ---- current area name (pause-map bottom bar + script flourish) ---- */
+const locname = document.getElementById("locname");
+const locscript = document.getElementById("locscript");
+let lastArea = "", scriptTimer = null;
+
+/* state abbreviations, resolved once per ~14mi grid cell and cached (free Nominatim) */
+const STATE_ABBR = { "Rhode Island": "RI", "Massachusetts": "MA", "Connecticut": "CT",
+  "New Hampshire": "NH", "Vermont": "VT", "Maine": "ME", "New York": "NY",
+  "New Jersey": "NJ", "Pennsylvania": "PA", "Quebec": "QC", "New Brunswick": "NB" };
+const stateCache = new Map();
+async function stateAbbrFor(lng, lat) {
+  const key = Math.round(lng * 5) + "," + Math.round(lat * 5);
+  if (stateCache.has(key)) return stateCache.get(key);
+  try {
+    const res = await fetch("https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=5&lat=" + lat + "&lon=" + lng,
+      { signal: AbortSignal.timeout(7000) });
+    const j = await res.json();
+    const st = (j.address && (j.address.state || j.address.region)) || "";
+    const ab = STATE_ABBR[st] || "";
+    stateCache.set(key, ab);
+    return ab;
+  } catch (e) { return ""; }
+}
+
+function setAreaText(txt) {
+  locname.textContent = txt;
+  locscript.textContent = txt;
+  // auto-fit: shrink the script font until the whole name fits on screen
+  locscript.style.fontSize = "52px";
+  const avail = window.innerWidth - 44;
+  if (locscript.scrollWidth > avail) {
+    locscript.style.fontSize = Math.max(22, Math.floor(52 * avail / locscript.scrollWidth)) + "px";
+  }
+  locscript.classList.add("show");
+  clearTimeout(scriptTimer);
+  scriptTimer = setTimeout(() => locscript.classList.remove("show"), 2600);
+}
+
+function updateArea() {
+  const z = map.getZoom();
+  const c = map.project(map.getCenter());
+  const box = [[c.x - 250, c.y - 250], [c.x + 250, c.y + 250]];
+  // match label granularity to what's actually visible at this zoom
+  const wanted = z < 8 ? ["place-city"]
+               : z < 11 ? ["place-town", "place-city"]
+               : ["place-village", "place-town", "place-city"];
+  const layers = wanted.filter(id => map.getLayer(id));
+  const feats = layers.length ? map.queryRenderedFeatures(box, { layers }) : [];
+  let best = null, bestD = Infinity;
+  for (const f of feats) {
+    const px = map.project({ lng: f.geometry.coordinates[0], lat: f.geometry.coordinates[1] });
+    const d = Math.hypot(px.x - c.x, px.y - c.y);
+    if (d < bestD) { bestD = d; best = f; }
+  }
+  if (!best) {
+    if (z < 8 && lastArea !== "New England") { lastArea = "New England"; setAreaText("New England"); }
+    return;
+  }
+  const name = best.properties.name;
+  if (name === lastArea) return;
+  lastArea = name;
+  setAreaText(name);
+  const [blng, blat] = best.geometry.coordinates;
+  stateAbbrFor(blng, blat).then(ab => {
+    if (ab && lastArea === name) setAreaText(name + ", " + ab);
+  });
+}
+map.on("moveend", updateArea);
+map.once("idle", updateArea);
+
+/* ---- Low Detail mode ---- */
+const LOW_DETAIL_LAYERS = ["road-minor", "road-minor-case", "road-path", "building", "rail", "road-label"];
+const ldBtn = document.getElementById("lowdetail");
+let lowDetail = false;
+ldBtn.addEventListener("click", () => {
+  lowDetail = !lowDetail;
+  ldBtn.classList.toggle("on", lowDetail);
+  LOW_DETAIL_LAYERS.forEach(id => {
+    if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", lowDetail ? "none" : "visible");
+  });
+  showToast(lowDetail ? "Low detail on" : "Low detail off");
+});
+
+/* ---- route bar + turn-by-turn directions ---- */
+const routeBar = document.getElementById("routebar");
+const dirPanel = document.getElementById("dirpanel");
+function hideRouteUI() { routeBar.classList.remove("show"); dirPanel.classList.remove("show"); rbSpeedEl.textContent = ""; }
+document.getElementById("rb-clear").addEventListener("click", clearRoute);
+document.getElementById("rb-steps").addEventListener("click", () => dirPanel.classList.toggle("show"));
+
+function fmtStepDist(m) {
+  return m < 160 ? Math.round(m / 3.048) * 10 + " ft" : (m / 1609.344).toFixed(1) + " mi";
+}
+const STEP_ARROWS = { left: "←", "slight left": "↖", "sharp left": "↙", right: "→",
+  "slight right": "↗", "sharp right": "↘", straight: "↑", uturn: "↩" };
+function stepText(s) {
+  const name = s.name ? " onto " + s.name : "";
+  const mod = s.maneuver.modifier || "";
+  switch (s.maneuver.type) {
+    case "depart": return "Head out" + name;
+    case "arrive": return "Arrive at destination";
+    case "turn": case "end of road": return "Turn " + (mod || "") + name;
+    case "continue": return "Continue " + (mod || "straight") + name;
+    case "new name": return "Continue" + name;
+    case "merge": return "Merge " + mod + name;
+    case "on ramp": return "Take the ramp" + name;
+    case "off ramp": return "Take the exit" + name;
+    case "fork": return "Keep " + (mod || "") + name;
+    case "roundabout": case "rotary": return "Take the roundabout" + name;
+    default: return "Continue" + name;
+  }
+}
+function renderRouteUI(r) {
+  const mi = (r.distance / 1609.344).toFixed(1);
+  const min = Math.round(r.duration / 60);
+  const eta = new Date(Date.now() + r.duration * 1000);
+  let hh = eta.getHours(), mm = String(eta.getMinutes()).padStart(2, "0");
+  const ap = hh >= 12 ? "PM" : "AM"; hh = hh % 12 || 12;
+  document.getElementById("rb-main").textContent = mi + " mi • " + min + " min • ETA " + hh + ":" + mm + " " + ap;
+  routeBar.classList.add("show");
+  const steps = (r.legs && r.legs[0] && r.legs[0].steps) || [];
+  dirPanel.innerHTML = steps.map(s => {
+    const arw = s.maneuver.type === "arrive" ? "⚑" : (STEP_ARROWS[s.maneuver.modifier] || "↑");
+    return '<div class="step"><span class="arw">' + arw + '</span><span>' + esc(stepText(s)) +
+      '</span><span class="sd">' + (s.distance > 15 ? fmtStepDist(s.distance) : "") + "</span></div>";
+  }).join("");
+}
+
+async function drawRoute() {
+  if (!playerPos || !waypoint) return;
+  lastRouteOrigin = playerPos.slice();
+  const d = waypoint.getLngLat();
+  const url = "https://router.project-osrm.org/route/v1/driving/" +
+    playerPos[0] + "," + playerPos[1] + ";" + d.lng + "," + d.lat +
+    "?overview=full&geometries=geojson&steps=true";
+  try {
+    const res = await fetch(url);
+    const json = await res.json();
+    if (json.code !== "Ok" || !json.routes || !json.routes.length) throw new Error("no route");
+    const r = json.routes[0];
+    map.getSource("route").setData({ type: "Feature", properties: {}, geometry: r.geometry });
+    renderRouteUI(r);
+  } catch (err) {
+    // routing unreachable: straight line fallback
+    map.getSource("route").setData({ type: "Feature", properties: {},
+      geometry: { type: "LineString", coordinates: [playerPos, [d.lng, d.lat]] } });
+    hideRouteUI();
+    showToast("GPS lost — direct line shown");
+  }
+}
+
+function clearRoute() {
+  if (waypoint) { waypoint.remove(); waypoint = null; }
+  if (map.getSource("route")) map.getSource("route").setData(EMPTY);
+  lastRouteOrigin = null;
+  hideRouteUI();
+  showToast("Waypoint cleared");
+}
+
+/* route color swatches */
+document.querySelectorAll(".route-swatch").forEach(sw => {
+  sw.addEventListener("click", () => {
+    document.querySelectorAll(".route-swatch").forEach(s => s.classList.remove("active"));
+    sw.classList.add("active");
+    routeColor = sw.dataset.color;
+    if (map.getLayer("route-line")) map.setPaintProperty("route-line", "line-color", routeColor);
+    if (waypointEl) waypointEl.style.backgroundImage = waypointSvg(routeColor);  // marker matches line
+  });
+});
+
+function showToast(msg) {
+  toast.textContent = msg;
+  toast.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove("show"), 2600);
+}
+</script>
+</body>
+</html>
