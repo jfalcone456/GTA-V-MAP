@@ -689,7 +689,24 @@ map.on("load", async () => {
   });
 });
 
-/* ---- search (Nominatim, free, bounded to New England) ---- */
+/* ---- Overpass with server fallback (the main server rate-limits under load) ---- */
+const OVERPASS_URLS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter"];
+async function overpassJSON(q, timeout) {
+  for (const u of OVERPASS_URLS) {
+    try {
+      const r = await fetch(u, {
+        method: "POST", body: "data=" + encodeURIComponent(q),
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        signal: AbortSignal.timeout(timeout || 9000)
+      });
+      const j = await r.json();
+      if (j && j.elements) return j;
+    } catch (e) {}
+  }
+  throw new Error("overpass unavailable");
+}
+
+/* ---- search (Photon primary: fuzzy + location-biased; Nominatim supplements) ---- */
 const searchInput = document.getElementById("searchinput");
 const searchResults = document.getElementById("searchresults");
 let searching = false;
@@ -702,27 +719,33 @@ async function runSearch() {
   searchResults.classList.add("show");
   try {
     const org = routeOrigin();
-    let url = "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&addressdetails=1&q=" + encodeURIComponent(q);
-    if (org) {
-      // bias results to ~35mi around the start (or safehouse), without excluding farther matches
-      url += "&viewbox=" + (org.pt[0] - 0.5) + "," + (org.pt[1] + 0.5) + "," + (org.pt[0] + 0.5) + "," + (org.pt[1] - 0.5);
-    } else {
-      url += "&bounded=1&viewbox=-74.4,47.8,-66.3,40.6";
-    }
-    /* run two searches in parallel: a broad one plus a strictly-bounded one around the start —
-       the bounded pass catches nearby chain stores ("dunkin") that broad ranking buries */
-    const jobs = [fetch(url, { signal: AbortSignal.timeout(9000) }).then(r => r.json()).catch(() => [])];
-    if (org) {
-      const d = 0.25;
-      const nearUrl = "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=8&bounded=1" +
-        "&viewbox=" + (org.pt[0] - d) + "," + (org.pt[1] + d) + "," + (org.pt[0] + d) + "," + (org.pt[1] - d) +
-        "&q=" + encodeURIComponent(q);
-      jobs.push(fetch(nearUrl, { signal: AbortSignal.timeout(9000) }).then(r => r.json()).catch(() => []));
-    }
-    const [nomList, nearList] = await Promise.all([jobs[0], jobs[1] || []]);
-    // merge nearby-first, dedup by name + rough location
+    const bias = org ? org.pt : (() => { const m = map.getCenter(); return [m.lng, m.lat]; })();
+
+    /* Photon: fuzzy, autocomplete-grade, biased to the start point — the primary engine.
+       Nominatim runs in parallel as a supplement for exact addresses it handles better. */
+    const photonJob = fetch("https://photon.komoot.io/api/?limit=10&lat=" + bias[1] + "&lon=" + bias[0] +
+      "&q=" + encodeURIComponent(q), { signal: AbortSignal.timeout(9000) })
+      .then(r => r.json())
+      .then(j => (j.features || []).map(f => {
+        const p = f.properties || {};
+        const title = p.name || [p.housenumber, p.street].filter(Boolean).join(" ") || "";
+        return {
+          lon: f.geometry.coordinates[0], lat: f.geometry.coordinates[1],
+          display_name: [title, p.city || p.town || p.village, p.state].filter(Boolean).join(", "),
+          type: p.osm_value || "place"
+        };
+      }).filter(it => it.display_name))
+      .catch(() => []);
+
+    let nomUrl = "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&addressdetails=1&q=" + encodeURIComponent(q);
+    nomUrl += org ? "&viewbox=" + (org.pt[0] - 0.5) + "," + (org.pt[1] + 0.5) + "," + (org.pt[0] + 0.5) + "," + (org.pt[1] - 0.5)
+                  : "&bounded=1&viewbox=-74.4,47.8,-66.3,40.6";
+    const nomJob = fetch(nomUrl, { signal: AbortSignal.timeout(9000) }).then(r => r.json()).catch(() => []);
+
+    const [photonList, nomList] = await Promise.all([photonJob, nomJob]);
+    // merge Photon-first, dedup by name + rough location
     const seen = new Set();
-    const list = [...(Array.isArray(nearList) ? nearList : []), ...(Array.isArray(nomList) ? nomList : [])].filter(r => {
+    const list = [...(Array.isArray(photonList) ? photonList : []), ...(Array.isArray(nomList) ? nomList : [])].filter(r => {
       const k = r.display_name.split(",")[0].toLowerCase() + "|" + (+r.lon).toFixed(3) + "," + (+r.lat).toFixed(3);
       if (seen.has(k)) return false;
       seen.add(k); return true;
@@ -793,12 +816,7 @@ async function categorySearch(cat) {
   try {
     const body = sel.map(s => "nwr[" + s + '][name](around:12000,' + c[1] + "," + c[0] + ");").join("");
     const q = "[out:json][timeout:9];(" + body + ");out tags center 40;";
-    const res = await fetch("https://overpass-api.de/api/interpreter", {
-      method: "POST", body: "data=" + encodeURIComponent(q),
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      signal: AbortSignal.timeout(9000)
-    });
-    const j = await res.json();
+    const j = await overpassJSON(q);
     const items = (j.elements || [])
       .map(el => ({ name: el.tags && el.tags.name, lng: el.lon || (el.center && el.center.lon), lat: el.lat || (el.center && el.center.lat), street: el.tags && el.tags["addr:street"] }))
       .filter(it => it.name && it.lng != null)
@@ -835,8 +853,11 @@ async function categorySearch(cat) {
     });
     return true;
   } catch (err) {
-    searchResults.classList.remove("show");
-    return false;   // offline: caller falls back to zoom-in behavior
+    // search servers busy: say so instead of failing silently, then let the caller zoom to the blips
+    searchResults.innerHTML = '<div class="sr"><div class="sr-d">Search servers busy — showing ' + esc(cat.label.toLowerCase()) + ' blips on the map instead</div></div>';
+    searchResults.classList.add("show");
+    setTimeout(() => searchResults.classList.remove("show"), 3500);
+    return false;
   }
 }
 
@@ -1123,11 +1144,7 @@ async function enrichPlace(lat, lng, name, catId) {
   ];
   if (catId !== "home") {
     const q = "[out:json][timeout:8];(nwr(around:50," + lat + "," + lng + ")[amenity];nwr(around:50," + lat + "," + lng + ")[shop];nwr(around:50," + lat + "," + lng + ")[leisure];);out tags 20;";
-    jobs.push(fetch("https://overpass-api.de/api/interpreter", {
-      method: "POST", body: "data=" + encodeURIComponent(q),
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      signal: AbortSignal.timeout(9000)
-    }).then(r => r.json()).then(j => {
+    jobs.push(overpassJSON(q).then(j => {
       const els = j.elements || [];
       const m = els.find(el => el.tags && name && el.tags.name === name) || els.find(el => el.tags && el.tags.name);
       if (!m) return;
