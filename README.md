@@ -17,6 +17,10 @@ Open it on a phone and use *Share → Add to Home Screen* to run it full-screen 
 - Safehouse system: set any location as home, route from it by default, drop points of interest with a long press
 - Current-area name in the corner (neighborhood, town, or city depending on zoom) with the state abbreviation, gameplay-style
 
+## The native iOS app
+
+This map also exists as a real iPhone app: same GTA cartography and blips, plus voice turn-by-turn navigation and TomTom live traffic. It's built on MapLibre Native and the MapLibre Navigation SDK, sideloaded with a free Apple ID. The app source lives in a separate private repo (it carries an API key). See ROADMAP.md for where the project is headed next.
+
 ## Built with
 
 This project stands on free, open infrastructure. Credit and thanks to:
@@ -26,7 +30,10 @@ This project stands on free, open infrastructure. Credit and thanks to:
 - **[MapLibre GL JS](https://maplibre.org/)** — open-source map rendering engine (BSD-3-Clause)
 - **[OSRM](https://project-osrm.org/)** (Open Source Routing Machine) — turn-by-turn route calculation via its public demo server
 - **[Nominatim](https://nominatim.org/)** — geocoding, reverse geocoding, and address lookups
-- **[Overpass API](https://overpass-api.de/)** — nearby-place and place-detail queries
+- **[Overpass API](https://overpass-api.de/)** — nearby-place and place-detail queries (with the [Kumi Systems](https://overpass.kumi.systems/) mirror as fallback)
+- **[Photon](https://photon.komoot.io/)** by Komoot — fuzzy, location-biased search-as-you-type
+- **[TomTom](https://developer.tomtom.com/)** — live traffic tiles in the iOS app (free developer tier)
+- **[MapLibre Navigation iOS](https://github.com/maplibre/maplibre-navigation-ios)** — turn-by-turn navigation in the iOS app
 - **[Oswald](https://fonts.google.com/specimen/Oswald)** and **[Kaushan Script](https://fonts.google.com/specimen/Kaushan+Script)** — fonts via Google Fonts (Open Font License), standing in for the game's Chalet and House Script typefaces
 
 ## Disclaimer
